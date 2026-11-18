@@ -44,7 +44,14 @@ func Export(c scene.Compiled) []byte {
 		for j, s := range l.Shapes {
 			br := s.Shape.Brush
 			if br.Kind == "linear" {
-				fmt.Fprintf(&b, `<linearGradient id="b%d_%d" gradientUnits="userSpaceOnUse" x1="%s" y1="%s" x2="%s" y2="%s">`, i, j, number(br.From.X), number(br.From.Y), number(br.To.X), number(br.To.Y))
+				from, to := br.From, br.To
+				if w := s.Shape.Warp; w != nil && w.MaterialGradient() {
+					// SVG 1.1 cannot express a materially warped gradient;
+					// the axis endpoints follow the warp as a documented
+					// linear approximation. PNG remains authoritative.
+					from, to = w.Apply(from), w.Apply(to)
+				}
+				fmt.Fprintf(&b, `<linearGradient id="b%d_%d" gradientUnits="userSpaceOnUse" x1="%s" y1="%s" x2="%s" y2="%s">`, i, j, number(from.X), number(from.Y), number(to.X), number(to.Y))
 				for _, stop := range br.Stops {
 					fmt.Fprintf(&b, `<stop offset="%s" stop-color="%s" stop-opacity="%s"/>`, number(stop.At), color(stop.Color), number(stop.Color.A))
 				}

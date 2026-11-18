@@ -36,7 +36,14 @@ func Render(ctx context.Context, c scene.Compiled) ([]byte, error) {
 						for _, s := range l.Shapes {
 							q := s.Inverse.Apply(p)
 							if s.Path.Contains(q, s.Shape.FillRule) {
-								src = paint.Over(src, paint.Sample(s.Shape.Brush, q), "normal")
+								// Canvas gradients stay fixed in the undeformed
+								// layout; material gradients are glued to the
+								// sheet and sampled at the rest position.
+								at := q
+								if w := s.Shape.Warp; w != nil && w.MaterialGradient() {
+									at = w.Invert(q)
+								}
+								src = paint.Over(src, paint.Sample(s.Shape.Brush, at), "normal")
 							}
 						}
 						dst = paint.Over(dst, src.Scale(l.Layer.Opacity), l.Layer.Blend)

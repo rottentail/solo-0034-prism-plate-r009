@@ -89,6 +89,101 @@ func brush(b scene.Brush) error {
 	}
 	return nil
 }
+
+// warpSpec admits a control grid only when the deformation it defines is a
+// homeomorphism of the plane: border nodes pinned (so the identity outside
+// the region joins without tears), interior nodes confined to the region (so
+// material cannot escape the declared area), and positive corner Jacobians
+// (bilinear det J attains its extremes at corners, so this is an exact
+// fold proof for every point of every cell).
+func warpSpec(w *geom.Warp) error {
+	if !finite(w.Origin.X) || !finite(w.Origin.Y) || !finite(w.Step.X) || !finite(w.Step.Y) {
+		return fmt.Errorf("invalid warp frame")
+	}
+	if w.Step.X <= 1e-9 || w.Step.Y <= 1e-9 {
+		return fmt.Errorf("warp cell size must be positive")
+	}
+	if w.Cols < 1 || w.Cols > 16 || w.Rows < 1 || w.Rows > 16 {
+		return fmt.Errorf("warp grid must be 1..16 cells per side")
+	}
+	if len(w.Points) != (w.Cols+1)*(w.Rows+1) {
+		return fmt.Errorf("warp node count must be (cols+1)*(rows+1)")
+	}
+	if w.GradientSpace != "" && w.GradientSpace != "material" && w.GradientSpace != "canvas" {
+		return fmt.Errorf("unknown gradient space")
+	}
+	maxX := w.Origin.X + float64(w.Cols)*w.Step.X
+	maxY := w.Origin.Y + float64(w.Rows)*w.Step.Y
+	for j := 0; j <= w.Rows; j++ {
+		for i := 0; i <= w.Cols; i++ {
+			p := w.Points[j*(w.Cols+1)+i]
+			if !finite(p.X) || !finite(p.Y) {
+				return fmt.Errorf("non-finite warp node")
+			}
+			if i == 0 || i == w.Cols || j == 0 || j == w.Rows {
+				if r := w.Rest(i, j); math.Abs(p.X-r.X) > 1e-9 || math.Abs(p.Y-r.Y) > 1e-9 {
+					return fmt.Errorf("warp boundary node (%d,%d) must stay pinned to keep the region edge seamless", i, j)
+				}
+				continue
+			}
+			if p.X < w.Origin.X-1e-9 || p.X > maxX+1e-9 || p.Y < w.Origin.Y-1e-9 || p.Y > maxY+1e-9 {
+				return fmt.Errorf("warp node (%d,%d) leaves the grid region", i, j)
+			}
+		}
+	}
+	for j := 0; j < w.Rows; j++ {
+		for i := 0; i < w.Cols; i++ {
+			for corner, d := range w.CornerDets(i, j) {
+				if d <= 1e-9 {
+					return fmt.Errorf("warp folds material at cell (%d,%d) corner %d (jacobian %.3g)", i, j, corner, d)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func ringArea(r geom.Contour) float64 {
+	s := 0.0
+	for i, a := range r {
+		b := r[(i+1)%len(r)]
+		s += a.X*b.Y - b.X*a.Y
+	}
+	return s / 2
+}
+
+// warpTopology replays the shape's own contours through the deformation and
+// rejects results whose fill semantics would silently change: reversed
+// orientation, collapsed rings (a cutout squeezed out of existence) or a
+// changed containment relation (a hole escaping its body).
+func warpTopology(before, after geom.Path) error {
+	for i, ring := range before {
+		a0 := ringArea(ring)
+		if math.Abs(a0) < 1e-12 {
+			continue
+		}
+		a1 := ringArea(after[i])
+		if a1*a0 <= 0 {
+			return fmt.Errorf("warp reverses contour %d orientation", i)
+		}
+		if math.Abs(a1) < 1e-9 || math.Abs(a1) < math.Abs(a0)*1e-3 {
+			return fmt.Errorf("warp collapses contour %d below visible size", i)
+		}
+	}
+	for i := range before {
+		for j := range before {
+			if i == j {
+				continue
+			}
+			inside0 := geom.Path{before[j]}.Contains(before[i][0], "nonzero")
+			inside1 := geom.Path{after[j]}.Contains(after[i][0], "nonzero")
+			if inside0 != inside1 {
+				return fmt.Errorf("warp moves contour %d across contour %d", i, j)
+			}
+		}
+	}
+	return nil
+}
 func Compile(d scene.Document) (scene.Compiled, error) {
 	c := scene.Compiled{Document: d}
 	if d.Width < 1 || d.Height < 1 || d.Width > 512 || d.Height > 512 || !Color(d.Background) {
@@ -164,6 +259,24 @@ func Compile(d scene.Document) (scene.Compiled, error) {
 			}
 			if e = brush(s.Brush); e != nil {
 				return c, e
+			}
+			if s.Warp != nil {
+				if e = warpSpec(s.Warp); e != nil {
+					return c, e
+				}
+				warped, we := s.Warp.ApplyPath(p)
+				if we != nil {
+					return c, we
+				}
+				if e = warpTopology(p, warped); e != nil {
+					return c, e
+				}
+				p = warped
+				// Material gradients pay an inverse-warp walk per covered
+				// sample; bill four edge units per grid cell.
+				if s.Brush.Kind == "linear" && s.Warp.MaterialGradient() {
+					c.Segments += 4 * s.Warp.Cols * s.Warp.Rows
+				}
 			}
 			count(p)
 			cl.Shapes = append(cl.Shapes, scene.CompiledShape{Shape: s, Path: p, Inverse: inv})

@@ -26,6 +26,7 @@ type Shape struct {
 	FillRule  string      `json:"fill_rule"`
 	Brush     Brush       `json:"brush"`
 	Transform geom.Matrix `json:"transform"`
+	Warp      *geom.Warp  `json:"warp,omitempty"`
 }
 type Layer struct {
 	ID      string    `json:"id"`

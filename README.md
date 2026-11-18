@@ -22,6 +22,8 @@ curl -X POST 'http://127.0.0.1:7846/v1/plates/amber-plate/render?revision=1&form
 
 examples/amber-proof.json 提供曲线、线性渐变、仿射变换、镂空、裁域、二值蒙版和 screen 叠色。坐标原点在左上，颜色为 0..1 的 sRGB 直通色值，PNG 在内部转换为线性光预乘透明度。M/L/Q/C/Z 路径必须显式闭合，轮廓至少三条端点指令；Q/C 分别固定细分16/24段。图层可选 normal/multiply/screen，组透明度在整层合成后施加，蒙版与裁域处于版面坐标，笔刷与填充轮廓处于形状局部坐标。未提供的数值使用 JSON 的零值；形状必须明确传入可逆 transform。
 
+形状可携带控制网格局部形变 warp：网格矩形内按双线性变形、矩形外恒等，边界节点钉住保证接缝不裂，折叠与镂空消失在准入时拒绝，渐变可选跟随材料（material）或固定在原画布（canvas)。表达、诊断与精度范围见 docs/warp.md，演示输入见 examples/warp-badge.json。不含 warp 的旧稿本渲染结果逐字节不变。
+
 PNG 是像素校样的权威结果：每像素四点覆盖采样，画布最大512×512。SVG 是复用展开几何的矢量校样；浏览器在覆盖率与透明渐变插值方面可能产生差异，不承诺逐像素相同。所有数值和引用均由服务生成，SVG不接受任意标记、脚本或外链。
 
 ## 版本及生命周期
@@ -39,7 +41,7 @@ python3 scripts/walkthrough.py --workflow png
 python3 scripts/walkthrough.py --workflow bundle
 ```
 
-可选workflow值：create、revise、branch、archive、png、svg、exposure、cancel、artifact、proof、bundle、restore、isolation、rejection。每个流程在临时数据根启动实际HTTP服务，完成后正常关停，不占用长期端口、不修改演示输入。
+可选workflow值：create、revise、branch、archive、png、svg、exposure、cancel、artifact、proof、bundle、restore、isolation、rejection、warp。每个流程在临时数据根启动实际HTTP服务，完成后正常关停，不占用长期端口、不修改演示输入。warp流程用独立Python参照重算控制网格形变，核对实际PNG的区外不变量、接缝连通性、地标落点与两种渐变取色，并验证折叠/镂空消失拒绝与封包移交。
 
 ## 持久化与范围
 
